@@ -1,0 +1,11 @@
+{
+  "identifier": "default",
+  "description": "Default permissions for Sharelist",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "dialog:default",
+    "notification:default",
+    "shell:allow-open"
+  ]
+}
