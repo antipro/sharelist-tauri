@@ -41,6 +41,13 @@ fn set_preference(app: AppHandle, pref: serde_json::Value) -> Result<(), String>
     std::fs::write(&file, data).map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+fn open_devtools(app: AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.open_devtools();
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -98,7 +105,7 @@ pub fn run() {
                 api.prevent_close();
             }
         })
-        .invoke_handler(tauri::generate_handler![get_preference, set_preference])
+        .invoke_handler(tauri::generate_handler![get_preference, set_preference, open_devtools])
         .run(tauri::generate_context!())
         .expect("error while running sharelist");
 }
