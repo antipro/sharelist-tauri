@@ -3,6 +3,37 @@ use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent}
 use tauri::{AppHandle, Manager};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
 
+fn defaults() -> serde_json::Value {
+    serde_json::json!({
+        "starup_hidden": false,
+        "shortcut": "S",
+        "close_to_tray": false
+    })
+}
+
+fn load_preference(app: &AppHandle) -> serde_json::Value {
+    let path = match app.path().app_data_dir() {
+        Ok(p) => p,
+        Err(_) => return defaults(),
+    };
+    let file = path.join("preferences.json");
+    if file.exists() {
+        let data = match std::fs::read_to_string(&file) {
+            Ok(d) => d,
+            Err(_) => return defaults(),
+        };
+        serde_json::from_str(&data).unwrap_or_else(|_| defaults())
+    } else {
+        defaults()
+    }
+}
+
+fn hide_window(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.hide();
+    }
+}
+
 fn confirm_and_quit(app: &AppHandle) {
     let handle = app.clone();
     app.dialog()
@@ -18,18 +49,7 @@ fn confirm_and_quit(app: &AppHandle) {
 
 #[tauri::command]
 fn get_preference(app: AppHandle) -> Result<serde_json::Value, String> {
-    let path = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    std::fs::create_dir_all(&path).map_err(|e| e.to_string())?;
-    let file = path.join("preferences.json");
-    if file.exists() {
-        let data = std::fs::read_to_string(&file).map_err(|e| e.to_string())?;
-        serde_json::from_str(&data).map_err(|e| e.to_string())
-    } else {
-        Ok(serde_json::json!({
-            "starup_hidden": false,
-            "shortcut": "S"
-        }))
-    }
+    Ok(load_preference(&app))
 }
 
 #[tauri::command]
@@ -37,7 +57,20 @@ fn set_preference(app: AppHandle, pref: serde_json::Value) -> Result<(), String>
     let path = app.path().app_data_dir().map_err(|e| e.to_string())?;
     std::fs::create_dir_all(&path).map_err(|e| e.to_string())?;
     let file = path.join("preferences.json");
-    let data = serde_json::to_string_pretty(&pref).map_err(|e| e.to_string())?;
+
+    let mut current = match load_preference(&app) {
+        serde_json::Value::Object(m) => m,
+        _ => serde_json::Map::new(),
+    };
+
+    if let serde_json::Value::Object(updates) = pref {
+        for (k, v) in updates {
+            current.insert(k, v);
+        }
+    }
+
+    let merged = serde_json::Value::Object(current);
+    let data = serde_json::to_string_pretty(&merged).map_err(|e| e.to_string())?;
     std::fs::write(&file, data).map_err(|e| e.to_string())
 }
 
@@ -51,6 +84,11 @@ fn open_devtools(app: AppHandle) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
         .setup(|app| {
@@ -101,7 +139,12 @@ pub fn run() {
         })
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                confirm_and_quit(&window.app_handle());
+                let pref = load_preference(&window.app_handle());
+                if pref.get("close_to_tray").and_then(|v| v.as_bool()).unwrap_or(false) {
+                    hide_window(&window.app_handle());
+                } else {
+                    confirm_and_quit(&window.app_handle());
+                }
                 api.prevent_close();
             }
         })
